@@ -171,7 +171,7 @@ Most active category: **[category/]** ([N pages added or updated])
   ---
   title: "Wiki Digest — [Period Label]"
   category: journal
-  tags: [digest, meta/review]
+  tags: [digest, meta/review, 모바일검색]
   sources: []
   created: TIMESTAMP
   updated: TIMESTAMP
@@ -181,10 +181,67 @@ Most active category: **[category/]** ([N pages added or updated])
 - Update `index.md` with the new entry under Journal
 - Do **not** add to `.manifest.json` (digests aren't source ingestions)
 
+The `모바일검색` tag enables Obsidian mobile search to find digest content on Android/iOS.
+
 Either way, append to `log.md`:
 ```
 - [TIMESTAMP] DIGEST period="7d" new_pages=N updated_pages=M themes=T connections=C saved=false
 ```
+
+## HTML Report Output (`--html`)
+
+When the user passes `--html` (e.g., `/wiki-digest --html save` or "generate an HTML
+digest"), produce a self-contained HTML report alongside the Markdown digest.
+
+### HTML structure
+
+```html
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wiki Digest — [Period Label]</title>
+  <style>
+    /* Self-contained CSS — no external stylesheets or CDN links */
+    /* WCAG AA contrast: body text ≥4.5:1 contrast ratio */
+    @media print { body { font-size: 11pt; } a { text-decoration: none; } }
+  </style>
+</head>
+<body>
+  <!-- Rendered digest content -->
+</body>
+</html>
+```
+
+Requirements:
+- **No external resources** — all CSS inline, no CDN scripts or remote fonts.
+- **WCAG AA contrast** — body text ≥4.5:1 contrast ratio. Print-safe CSS for clean
+  browser-to-PDF conversion.
+- **Wikilinks as anchors** — `[[page]]` references become `#page-slug` links within
+  the document.
+- **Responsive** — uses relative units and `max-width` for readability on mobile.
+
+### Saving HTML
+
+With `--html save`, write to `journal/digest-YYYY-MM-DD.html` alongside the Markdown
+file. Also create a companion Markdown file (`journal/digest-YYYY-MM-DD-companion.md`)
+with frontmatter including the `모바일검색` tag and a plain-text version of the digest
+headlines for Obsidian mobile search:
+
+```yaml
+---
+title: "Wiki Digest — [Period Label]"
+category: journal
+tags: [digest, meta/review, 모바일검색]
+summary: "Weekly digest: [headlines]. HTML report: digest-YYYY-MM-DD.html"
+created: TIMESTAMP
+updated: TIMESTAMP
+---
+```
+
+This companion file ensures the digest is discoverable via Obsidian's mobile search
+even though the HTML report itself is not indexed by Obsidian's search.
 
 ## Edge Cases
 

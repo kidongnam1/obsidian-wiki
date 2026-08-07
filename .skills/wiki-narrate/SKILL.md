@@ -8,20 +8,22 @@ description: >
 
 # Wiki Narrate — Cited Narrative Readouts
 
-Use this skill only for a topic-based Markdown readout. Do not add tag or page-list
-selection, prior-query input, voice aliases, HTML, PDF, slides, renderer handoffs, or
-new compiled knowledge pages.
+Use this skill only for a topic-based Markdown or HTML readout. Do not add tag or
+page-list selection, prior-query input, voice aliases, PDF, slides, renderer handoffs,
+or new compiled knowledge pages.
 
 ## Command Contract
 
-`/wiki-narrate <topic> [--voice briefing|plain-language|lecturer] [--save]`
+`/wiki-narrate <topic> [--voice briefing|plain-language|lecturer] [--save] [--html]`
 
 - Require a non-empty `<topic>`.
 - The default voice is `briefing`.
 - Voice names are canonical and case-sensitive. Unsupported values must return an
   error listing `briefing`, `plain-language`, and `lecturer` without searching or
   writing.
-- `--save` is the only persistence switch.
+- `--save` is the persistence switch for Markdown readouts.
+- `--html` generates a self-contained HTML report alongside (or instead of) the
+  Markdown output. See *HTML Report Output* below.
 - For a missing topic, malformed option, or unsupported voice, return a short usage
   or validation error and do not search, write, append a log event, or change `hot.md`.
 
@@ -100,6 +102,53 @@ After a narration attempt that reaches retrieval, append one `WIKI_NARRATE` even
   `hot.md`.
 - If appending `log.md` fails, preserve the readout result and report the logging
   failure separately. Never represent a failed log or save as successful.
+
+## HTML Report Output
+
+When `--html` is passed, produce a **self-contained HTML document** in addition to (or
+instead of, if `--save` is not also passed) the Markdown readout. The HTML report is a
+standalone file that can be opened in any browser without a server.
+
+### HTML structure
+
+```html
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>[Topic] — Wiki Narrate</title>
+  <style>
+    /* Self-contained CSS — no external stylesheets */
+    /* WCAG AA contrast: ensure body text has ≥4.5:1 contrast ratio */
+    @media print { body { font-size: 11pt; } a { text-decoration: none; } }
+  </style>
+</head>
+<body>
+  <!-- Rendered content from the Markdown readout -->
+</body>
+</html>
+```
+
+Requirements:
+- **No external resources** — no CDN scripts, external fonts, or remote images. All
+  CSS is inline in a `<style>` block.
+- **WCAG AA contrast** — body text must have ≥4.5:1 contrast ratio against the
+  background. Inject print-safety CSS for clean PDF rendering via browser print.
+- **Citations as links** — `[[wikilinks]]` become anchor links (`#page-slug`) within
+  the document; if the cited page has a `summary:` field, include it as a tooltip
+  (`title` attribute).
+- **Coverage footer** — the `## Coverage` section renders as a styled footer with
+  cited page count, inference count, and evidence gaps.
+
+### Saving HTML
+
+With `--save --html`, write the HTML to `_readouts/<slug>.html` alongside the
+Markdown readout at `_readouts/<slug>.md`. Without `--save`, return the HTML in
+conversation (as a code block or inline) and do not write any file.
+
+The same logging rules apply: append a `WIKI_NARRATE` event with `format=html` when
+HTML is generated.
 
 ## Safe Failure Behavior
 

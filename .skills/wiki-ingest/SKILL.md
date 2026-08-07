@@ -152,16 +152,55 @@ way as any other folder source, with one important difference in how files are d
    file and only reprocesses new/changed ones (`git pull` then re-run `wiki-ingest` on the same
    path — no need to re-clone or re-ingest unchanged files).
 
+### Sensitive Folder Exclusion
+
+Before walking a source directory, skip any folder whose name contains a sensitive
+hint: `개인`, `금융`, `중요서류`, `계좌`, `비밀번호`, `주민`, `여권`, `대출`,
+`credentials`, `secrets`, `private`. These folders are silently excluded from
+ingestion to avoid accidentally processing personal financial or identity documents.
+Report excluded folder names at the end of the ingest summary so the user knows what
+was skipped (e.g., *"Skipped 2 sensitive folders: 개인/, 금융/"*).
+
+When `obsidian-wiki` is installed, use `docextract.is_sensitive_folder()` for the
+check. Otherwise, match folder names case-insensitively against the list above.
+
+### PII Redaction
+
+After extracting text from any source (before distilling into wiki pages), run PII
+redaction on the extracted content. This masks email addresses, Korean resident
+registration numbers (주민번호), phone numbers, credit/account card numbers, bank
+account numbers, and API keys/tokens/passwords.
+
+When `obsidian-wiki` is installed, use `docextract.redact_pii(text)`. Otherwise,
+apply these regex substitutions manually:
+- Email → `[EMAIL_REDACTED]`
+- `\d{6}-\d{7}` (주민번호) → `[RRN_REDACTED]`
+- 13–19 digit sequences → `[CARD_REDACTED]`
+- Korean mobile (`01X-XXXX-XXXX`) → `[PHONE_REDACTED]`
+- Account number patterns → `[ACCOUNT_REDACTED]`
+- `api_key|token|password|secret = ...` lines → `[SECRET_REDACTED]`
+
+PII redaction runs on the *extracted text* before the LLM sees it, not on the final
+wiki page. If the LLM still outputs PII in its response, flag it to the user.
+
 ### Step 1: Read the Source
 
 Read the source(s) the user wants to ingest. In append mode, skip files the manifest says are already ingested and unchanged. Supported formats:
 - Markdown (`.md`) — read directly
 - Text (`.txt`) — read directly
-- PDF (`.pdf`) — use the Read tool with page ranges. For **academic papers** (arXiv/conference), see *Academic papers* below — re-read figure- and equation-dense pages with vision so the architecture diagram, key equations, and results tables aren't lost.
+- PDF (`.pdf`) — use the Read tool with page ranges, or use `docextract.extract_pdf_text()` / `docextract.cached_extract()` for local text extraction via `pypdf` (requires `pip install obsidian-wiki[docs]`). For **academic papers** (arXiv/conference), see *Academic papers* below — re-read figure- and equation-dense pages with vision so the architecture diagram, key equations, and results tables aren't lost.
+- **HWP** (`.hwp`) — Korean Hangul Word Processor files. Use `docextract.extract_hwp_text()` or `docextract.cached_extract()` (requires `pip install obsidian-wiki[docs]` for the `olefile` dependency). Extracts paragraph text from OLE binary streams. Password-protected HWP files return a notice instead of content.
+- **HWPX** (`.hwpx`) — ZIP-based HWP format (no extra dependencies). Use `docextract.extract_hwpx_text()` or `docextract.cached_extract()`. Parses `Contents/sectionN.xml` files inside the ZIP to extract text.
 - Web clippings — markdown files from Obsidian Web Clipper
 - **Structured data** (`.json`, `.jsonl`, `.csv`, `.tsv`, `.html`) — parse the structure first, then distill the knowledge it carries. See *Unstructured & conversational sources* below.
 - **Chat / conversation exports** — ChatGPT `conversations.json`, Slack/Discord channel JSON, timestamped chat logs, meeting transcripts. See *Unstructured & conversational sources* below.
 - **Images** (`.png`, `.jpg`, `.jpeg`, `.webp`, `.gif`) — *requires a vision-capable model*. Use the Read tool, which renders the image into your context. Treat screenshots, whiteboard photos, diagrams, and slide captures as first-class sources. If your model doesn't support vision, skip image sources and tell the user which files were skipped so they can re-run with a vision-capable model.
+
+**Binary document caching:** When ingesting HWP, HWPX, or PDF files, prefer
+`docextract.cached_extract(path)` over the bare extraction functions. It maintains a
+two-tier cache (in-memory LRU of 500 entries + SQLite on disk at
+`.cache/docextract.sqlite3`) keyed by file path, mtime, and size. Re-ingesting the
+same file skips the extraction entirely. The cache DB is local and excluded from git.
 
 Note the source path — you'll need it for provenance tracking.
 
