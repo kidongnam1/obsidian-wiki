@@ -191,16 +191,23 @@ Read the source(s) the user wants to ingest. In append mode, skip files the mani
 - PDF (`.pdf`) — use the Read tool with page ranges, or use `docextract.extract_pdf_text()` / `docextract.cached_extract()` for local text extraction via `pypdf` (requires `pip install obsidian-wiki[docs]`). For **academic papers** (arXiv/conference), see *Academic papers* below — re-read figure- and equation-dense pages with vision so the architecture diagram, key equations, and results tables aren't lost.
 - **HWP** (`.hwp`) — Korean Hangul Word Processor files. Use `docextract.extract_hwp_text()` or `docextract.cached_extract()` (requires `pip install obsidian-wiki[docs]` for the `olefile` dependency). Extracts paragraph text from OLE binary streams. Password-protected HWP files return a notice instead of content.
 - **HWPX** (`.hwpx`) — ZIP-based HWP format (no extra dependencies). Use `docextract.extract_hwpx_text()` or `docextract.cached_extract()`. Parses `Contents/sectionN.xml` files inside the ZIP to extract text.
+- **DOCX** (`.docx`) — Microsoft Word (Office Open XML). Use `docextract.extract_docx_text()` or `docextract.cached_extract()`. No extra dependencies — parses `word/document.xml` inside the ZIP using stdlib.
+- **XLSX** (`.xlsx`) — Microsoft Excel (Office Open XML). Use `docextract.extract_xlsx_text()` or `docextract.cached_extract()`. Reads shared strings and worksheet cells. No extra dependencies.
+- **PPTX** (`.pptx`) — Microsoft PowerPoint (Office Open XML). Use `docextract.extract_pptx_text()` or `docextract.cached_extract()`. Extracts text from all slides. No extra dependencies.
+- **DOC** (`.doc`) — Legacy Word binary format. Use `docextract.extract_doc_text()` or `docextract.cached_extract()` (requires `pip install obsidian-wiki[docs]` for `olefile`). Parses the piece table to reassemble text from the WordDocument stream.
+- **XLS** (`.xls`) — Legacy Excel binary format (BIFF8). Use `docextract.extract_xls_text()` or `docextract.cached_extract()` (requires `pip install obsidian-wiki[docs]` for `olefile`). Reads the Shared String Table for cell text.
+- **PPT** (`.ppt`) — Legacy PowerPoint binary format. Use `docextract.extract_ppt_text()` or `docextract.cached_extract()` (requires `pip install obsidian-wiki[docs]` for `olefile`). Scans for TextCharsAtom/TextBytesAtom records.
 - Web clippings — markdown files from Obsidian Web Clipper
 - **Structured data** (`.json`, `.jsonl`, `.csv`, `.tsv`, `.html`) — parse the structure first, then distill the knowledge it carries. See *Unstructured & conversational sources* below.
 - **Chat / conversation exports** — ChatGPT `conversations.json`, Slack/Discord channel JSON, timestamped chat logs, meeting transcripts. See *Unstructured & conversational sources* below.
 - **Images** (`.png`, `.jpg`, `.jpeg`, `.webp`, `.gif`) — *requires a vision-capable model*. Use the Read tool, which renders the image into your context. Treat screenshots, whiteboard photos, diagrams, and slide captures as first-class sources. If your model doesn't support vision, skip image sources and tell the user which files were skipped so they can re-run with a vision-capable model.
 
-**Binary document caching:** When ingesting HWP, HWPX, or PDF files, prefer
-`docextract.cached_extract(path)` over the bare extraction functions. It maintains a
-two-tier cache (in-memory LRU of 500 entries + SQLite on disk at
-`.cache/docextract.sqlite3`) keyed by file path, mtime, and size. Re-ingesting the
-same file skips the extraction entirely. The cache DB is local and excluded from git.
+**Binary document caching:** When ingesting HWP, HWPX, PDF, DOCX, XLSX, PPTX, DOC,
+XLS, or PPT files, prefer `docextract.cached_extract(path)` over the bare extraction
+functions. It maintains a two-tier cache (in-memory LRU of 500 entries + SQLite on
+disk at `.cache/docextract.sqlite3`) keyed by file path, mtime, and size. Re-ingesting
+the same file skips the extraction entirely. The cache DB is local and excluded from
+git.
 
 Note the source path — you'll need it for provenance tracking.
 

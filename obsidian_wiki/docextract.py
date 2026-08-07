@@ -1,8 +1,10 @@
-"""Extract text from binary document formats (HWP, HWPX, PDF) with caching and PII redaction.
+"""Extract text from binary document formats with caching and PII redaction.
 
-Adapted from patterns in the Ruby Obsidian HTML Studio project.  Optional
-dependencies: ``olefile`` (HWP), ``pypdf`` (PDF).  HWPX uses only stdlib
-(``zipfile`` + ``xml.etree``).
+Supported formats:
+- HWP / HWPX (Korean word processor) — ``olefile`` (HWP only) / stdlib
+- PDF — ``pypdf``
+- DOCX / XLSX / PPTX (Office Open XML) — stdlib (``zipfile`` + ``xml.etree``)
+- DOC / XLS / PPT (legacy Office binary) — ``olefile``
 
 Usage from skills or CLI::
 
@@ -16,6 +18,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import struct
 import threading
 import zlib
 import zipfile
@@ -26,7 +29,11 @@ from typing import Optional
 MAX_EXTRACTED_CHARS = 250_000
 
 TEXT_EXTENSIONS = {".md", ".txt", ".csv", ".json", ".tsv", ".html"}
-DOCUMENT_EXTENSIONS = {".pdf", ".hwp", ".hwpx"}
+DOCUMENT_EXTENSIONS = {
+    ".pdf", ".hwp", ".hwpx",
+    ".docx", ".xlsx", ".pptx",
+    ".doc", ".xls", ".ppt",
+}
 SEARCHABLE_EXTENSIONS = TEXT_EXTENSIONS | DOCUMENT_EXTENSIONS
 
 SENSITIVE_FOLDER_HINTS = (
@@ -214,6 +221,385 @@ def extract_pdf_text(path: Path) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Office Open XML extraction (DOCX, XLSX, PPTX) — stdlib only
+# ---------------------------------------------------------------------------
+
+_OOXML_NS = {
+    "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+    "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
+    "r": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+}
+
+
+def extract_docx_text(path: Path) -> str:
+    """Extract text from a DOCX file (Office Open XML)."""
+    paragraphs: list[str] = []
+    used = 0
+    with zipfile.ZipFile(path) as zf:
+        try:
+            xml_data = zf.read("word/document.xml")
+        except KeyError:
+            return ""
+        root = ElementTree.fromstring(xml_data)
+        for para in root.iter(f"{{{_OOXML_NS['w']}}}p"):
+            texts: list[str] = []
+            for t_elem in para.iter(f"{{{_OOXML_NS['w']}}}t"):
+                if t_elem.text:
+                    texts.append(t_elem.text)
+            line = "".join(texts).strip()
+            if not line:
+                continue
+            remaining = MAX_EXTRACTED_CHARS - used
+            if remaining <= 0:
+                break
+            paragraphs.append(line[:remaining])
+            used += len(paragraphs[-1])
+    return "\n".join(paragraphs)
+
+
+def extract_xlsx_text(path: Path) -> str:
+    """Extract text from an XLSX file (Office Open XML)."""
+    ns = _OOXML_NS["r"]
+    shared_strings: list[str] = []
+    with zipfile.ZipFile(path) as zf:
+        if "xl/sharedStrings.xml" in zf.namelist():
+            ss_root = ElementTree.fromstring(zf.read("xl/sharedStrings.xml"))
+            for si in ss_root.iter(f"{{{ns}}}si"):
+                parts: list[str] = []
+                for t_elem in si.iter(f"{{{ns}}}t"):
+                    if t_elem.text:
+                        parts.append(t_elem.text)
+                shared_strings.append("".join(parts))
+
+        rows_out: list[str] = []
+        used = 0
+        sheet_names = sorted(
+            n for n in zf.namelist()
+            if n.startswith("xl/worksheets/sheet") and n.endswith(".xml")
+        )
+        for sheet_name in sheet_names:
+            sheet_root = ElementTree.fromstring(zf.read(sheet_name))
+            for row in sheet_root.iter(f"{{{ns}}}row"):
+                cells: list[str] = []
+                for cell in row.iter(f"{{{ns}}}c"):
+                    cell_type = cell.get("t", "")
+                    v_elem = cell.find(f"{{{ns}}}v")
+                    if v_elem is not None and v_elem.text:
+                        if cell_type == "s":
+                            idx = int(v_elem.text)
+                            if idx < len(shared_strings):
+                                cells.append(shared_strings[idx])
+                        else:
+                            cells.append(v_elem.text)
+                    else:
+                        is_elem = cell.find(f"{{{ns}}}is")
+                        if is_elem is not None:
+                            inline_parts = []
+                            for t_el in is_elem.iter(f"{{{ns}}}t"):
+                                if t_el.text:
+                                    inline_parts.append(t_el.text)
+                            if inline_parts:
+                                cells.append("".join(inline_parts))
+                if cells:
+                    line = "\t".join(cells)
+                    remaining = MAX_EXTRACTED_CHARS - used
+                    if remaining <= 0:
+                        break
+                    rows_out.append(line[:remaining])
+                    used += len(rows_out[-1])
+            if used >= MAX_EXTRACTED_CHARS:
+                break
+    return "\n".join(rows_out)
+
+
+def extract_pptx_text(path: Path) -> str:
+    """Extract text from a PPTX file (Office Open XML)."""
+    ns_a = _OOXML_NS["a"]
+    slides_text: list[str] = []
+    used = 0
+    with zipfile.ZipFile(path) as zf:
+        slide_names = sorted(
+            n for n in zf.namelist()
+            if n.startswith("ppt/slides/slide") and n.endswith(".xml")
+        )
+        for slide_name in slide_names:
+            root = ElementTree.fromstring(zf.read(slide_name))
+            paragraphs: list[str] = []
+            for para in root.iter(f"{{{ns_a}}}p"):
+                runs: list[str] = []
+                for t_elem in para.iter(f"{{{ns_a}}}t"):
+                    if t_elem.text:
+                        runs.append(t_elem.text)
+                line = "".join(runs).strip()
+                if line:
+                    paragraphs.append(line)
+            if paragraphs:
+                slide_block = "\n".join(paragraphs)
+                remaining = MAX_EXTRACTED_CHARS - used
+                if remaining <= 0:
+                    break
+                slides_text.append(slide_block[:remaining])
+                used += len(slides_text[-1])
+    return "\n\n".join(slides_text)
+
+
+# ---------------------------------------------------------------------------
+# Legacy Office binary extraction (DOC, XLS, PPT) — requires olefile
+# ---------------------------------------------------------------------------
+
+def extract_doc_text(path: Path) -> str:
+    """Extract text from a legacy DOC file (Word Binary File Format).
+
+    Requires the ``olefile`` package. Parses the piece table in the Table
+    stream to reassemble document text from CP1252 and UTF-16LE pieces.
+    Returns an empty string for corrupt or invalid files.
+    """
+    import olefile  # type: ignore[import-untyped]
+
+    try:
+        ole = olefile.OleFileIO(str(path))
+    except Exception:
+        return ""
+    with ole:
+        if not ole.exists("WordDocument"):
+            return ""
+        word_stream = ole.openstream("WordDocument").read()
+        if len(word_stream) < 48:
+            return ""
+
+        flags = struct.unpack_from("<H", word_stream, 0x000A)[0]
+        table_name = "1Table" if (flags & 0x0200) else "0Table"
+        if not ole.exists(table_name):
+            return ""
+        table_stream = ole.openstream(table_name).read()
+
+        fc_clx = struct.unpack_from("<I", word_stream, 0x01A2)[0]
+        lcb_clx = struct.unpack_from("<I", word_stream, 0x01A6)[0]
+        if fc_clx == 0 or lcb_clx == 0:
+            return ""
+        if fc_clx + lcb_clx > len(table_stream):
+            return ""
+        clx = table_stream[fc_clx:fc_clx + lcb_clx]
+
+        pos = 0
+        while pos < len(clx) and clx[pos] == 0x01:
+            if pos + 1 >= len(clx):
+                break
+            grpprl_len = struct.unpack_from("<H", clx, pos + 1)[0]
+            pos += 3 + grpprl_len
+
+        if pos >= len(clx) or clx[pos] != 0x02:
+            return ""
+        pos += 1
+        if pos + 4 > len(clx):
+            return ""
+        pcdt_size = struct.unpack_from("<I", clx, pos)[0]
+        pos += 4
+        if pos + pcdt_size > len(clx):
+            return ""
+        pcd_data = clx[pos:pos + pcdt_size]
+
+        n_pieces = (pcdt_size - 4) // 12
+        if n_pieces <= 0:
+            return ""
+        cp_offsets = []
+        for i in range(n_pieces + 1):
+            cp_offsets.append(struct.unpack_from("<I", pcd_data, i * 4)[0])
+
+        pcd_start = (n_pieces + 1) * 4
+        text_parts: list[str] = []
+        used = 0
+        for i in range(n_pieces):
+            if pcd_start + i * 8 + 8 > len(pcd_data):
+                break
+            pcd_entry = pcd_data[pcd_start + i * 8:pcd_start + (i + 1) * 8]
+            fc_value = struct.unpack_from("<I", pcd_entry, 2)[0]
+            is_ansi = bool(fc_value & 0x40000000)
+            fc_value &= 0x3FFFFFFF
+
+            char_count = cp_offsets[i + 1] - cp_offsets[i]
+            if is_ansi:
+                offset = fc_value // 2
+                end = offset + char_count
+                if end <= len(word_stream):
+                    chunk = word_stream[offset:end].decode("cp1252", errors="replace")
+                else:
+                    continue
+            else:
+                offset = fc_value
+                byte_count = char_count * 2
+                end = offset + byte_count
+                if end <= len(word_stream):
+                    chunk = word_stream[offset:end].decode("utf-16le", errors="replace")
+                else:
+                    continue
+
+            remaining = MAX_EXTRACTED_CHARS - used
+            if remaining <= 0:
+                break
+            text_parts.append(chunk[:remaining])
+            used += len(text_parts[-1])
+
+        result = "".join(text_parts)
+        result = re.sub(r"[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]", "", result)
+        return result.strip()
+
+
+def extract_xls_text(path: Path) -> str:
+    """Extract text from a legacy XLS file (BIFF8 format).
+
+    Requires the ``olefile`` package. Reads the Shared String Table (SST)
+    to extract all unique cell text values.
+    Returns an empty string for corrupt or invalid files.
+    """
+    import olefile  # type: ignore[import-untyped]
+
+    try:
+        ole = olefile.OleFileIO(str(path))
+    except Exception:
+        return ""
+    with ole:
+        stream_name = None
+        for candidate in ("Workbook", "Book"):
+            if ole.exists(candidate):
+                stream_name = candidate
+                break
+        if stream_name is None:
+            return ""
+        data = ole.openstream(stream_name).read()
+
+    strings: list[str] = []
+    used = 0
+    pos = 0
+    while pos + 4 <= len(data):
+        rec_type = struct.unpack_from("<H", data, pos)[0]
+        rec_len = struct.unpack_from("<H", data, pos + 2)[0]
+        pos += 4
+        if pos + rec_len > len(data):
+            break
+
+        if rec_type == 0x00FC:
+            sst_data = data[pos:pos + rec_len]
+            if len(sst_data) < 8:
+                pos += rec_len
+                continue
+            total_strings = struct.unpack_from("<I", sst_data, 4)[0]
+            sst_pos = 8
+            for _ in range(total_strings):
+                if sst_pos + 3 > len(sst_data):
+                    break
+                char_count = struct.unpack_from("<H", sst_data, sst_pos)[0]
+                flags = sst_data[sst_pos + 2]
+                sst_pos += 3
+                is_wide = bool(flags & 0x01)
+                has_rich = bool(flags & 0x08)
+                has_ext = bool(flags & 0x04)
+                if has_rich:
+                    if sst_pos + 2 > len(sst_data):
+                        break
+                    rich_runs = struct.unpack_from("<H", sst_data, sst_pos)[0]
+                    sst_pos += 2
+                else:
+                    rich_runs = 0
+                if has_ext:
+                    if sst_pos + 4 > len(sst_data):
+                        break
+                    ext_size = struct.unpack_from("<I", sst_data, sst_pos)[0]
+                    sst_pos += 4
+                else:
+                    ext_size = 0
+
+                if is_wide:
+                    byte_len = char_count * 2
+                    if sst_pos + byte_len > len(sst_data):
+                        break
+                    text = sst_data[sst_pos:sst_pos + byte_len].decode(
+                        "utf-16le", errors="replace"
+                    )
+                    sst_pos += byte_len
+                else:
+                    if sst_pos + char_count > len(sst_data):
+                        break
+                    text = sst_data[sst_pos:sst_pos + char_count].decode(
+                        "cp1252", errors="replace"
+                    )
+                    sst_pos += char_count
+
+                sst_pos += rich_runs * 4
+                sst_pos += ext_size
+
+                text = text.strip()
+                if text:
+                    remaining = MAX_EXTRACTED_CHARS - used
+                    if remaining <= 0:
+                        break
+                    strings.append(text[:remaining])
+                    used += len(strings[-1])
+            break
+        pos += rec_len
+
+    return "\n".join(strings)
+
+
+def extract_ppt_text(path: Path) -> str:
+    """Extract text from a legacy PPT file (PowerPoint Binary format).
+
+    Requires the ``olefile`` package. Scans for TextBytesAtom (0x0FA8)
+    and TextCharsAtom (0x0FA0) records in the PowerPoint Document stream.
+    Returns an empty string for corrupt or invalid files.
+    """
+    import olefile  # type: ignore[import-untyped]
+
+    try:
+        ole = olefile.OleFileIO(str(path))
+    except Exception:
+        return ""
+    with ole:
+        if not ole.exists("PowerPoint Document"):
+            return ""
+        data = ole.openstream("PowerPoint Document").read()
+
+    text_parts: list[str] = []
+    used = 0
+    pos = 0
+    while pos + 8 <= len(data):
+        rec_ver_inst = struct.unpack_from("<H", data, pos)[0]
+        rec_type = struct.unpack_from("<H", data, pos + 2)[0]
+        rec_len = struct.unpack_from("<I", data, pos + 4)[0]
+        pos += 8
+        is_container = (rec_ver_inst & 0x0F) == 0x0F
+        if is_container:
+            continue
+
+        if rec_type == 0x0FA0:
+            end = pos + rec_len
+            if end <= len(data):
+                text = data[pos:end].decode("utf-16le", errors="replace").strip()
+                if text:
+                    remaining = MAX_EXTRACTED_CHARS - used
+                    if remaining <= 0:
+                        break
+                    text_parts.append(text[:remaining])
+                    used += len(text_parts[-1])
+        elif rec_type == 0x0FA8:
+            end = pos + rec_len
+            if end <= len(data):
+                text = data[pos:end].decode("cp1252", errors="replace").strip()
+                if text:
+                    remaining = MAX_EXTRACTED_CHARS - used
+                    if remaining <= 0:
+                        break
+                    text_parts.append(text[:remaining])
+                    used += len(text_parts[-1])
+
+        pos += rec_len
+
+    result = "\n".join(text_parts)
+    result = re.sub(r"[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]", "", result)
+    return result.strip()
+
+
+# ---------------------------------------------------------------------------
 # Unified extraction entry point
 # ---------------------------------------------------------------------------
 
@@ -226,12 +612,20 @@ def extract_text(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix in TEXT_EXTENSIONS:
         return path.read_text(encoding="utf-8", errors="replace")[:MAX_EXTRACTED_CHARS]
-    if suffix == ".pdf":
-        return extract_pdf_text(path)
-    if suffix == ".hwp":
-        return extract_hwp_text(path)
-    if suffix == ".hwpx":
-        return extract_hwpx_text(path)
+    extractors = {
+        ".pdf": extract_pdf_text,
+        ".hwp": extract_hwp_text,
+        ".hwpx": extract_hwpx_text,
+        ".docx": extract_docx_text,
+        ".xlsx": extract_xlsx_text,
+        ".pptx": extract_pptx_text,
+        ".doc": extract_doc_text,
+        ".xls": extract_xls_text,
+        ".ppt": extract_ppt_text,
+    }
+    fn = extractors.get(suffix)
+    if fn is not None:
+        return fn(path)
     return ""
 
 
