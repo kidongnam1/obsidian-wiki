@@ -4,6 +4,7 @@ title: Wiki Log
 
 # Wiki Log
 
+- [2026-08-08] UPDATE pages=4 (para-framework 보강, quickadd-자동화 Capture 상세, dataview-카드뷰-대시보드 코드 추가, 허브-노트-템플릿 신규)
 - [2026-08-08] UPDATE pages=3 (obsidian-비마크다운-파일-연관 보강, quickadd-자동화 보강, obsidian-추천-플러그인 신규)
 - [2026-08-08] INGEST source="gemini-session-2026-08-08" pages=6 (para-framework, 허브-노트-패턴, quickadd-자동화, dataview-카드뷰-대시보드, obsidian-비마크다운-파일-연관, ssd-문서-세컨드브레인-통합전략)
 - [2026-08-08] INIT vault_path="/root/brain" categories=concepts,entities,skills,references,synthesis,journal

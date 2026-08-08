@@ -1,7 +1,7 @@
 {
   "gemini-session-2026-08-08": {
     "source_type": "conversation_export",
-    "source_label": "Gemini Ruby 대화 — SSD 문서 + Obsidian 세컨드 브레인 구축",
+    "source_label": "Gemini Ruby 대화 — SSD 문서 + Obsidian 세컨드 브레인 구축 (전체 세션)",
     "ingested_at": "2026-08-08",
     "pages_produced": [
       "concepts/para-framework.md",
@@ -10,6 +10,7 @@
       "skills/dataview-카드뷰-대시보드.md",
       "references/obsidian-비마크다운-파일-연관.md",
       "references/obsidian-추천-플러그인.md",
+      "references/허브-노트-템플릿.md",
       "synthesis/ssd-문서-세컨드브레인-통합전략.md"
     ]
   }
