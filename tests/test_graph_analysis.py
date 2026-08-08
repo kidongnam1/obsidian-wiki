@@ -1,4 +1,6 @@
 """Tests for vault graph analysis: community detection, god nodes, surprising connections."""
+from __future__ import annotations
+
 import json
 import subprocess
 import sys
