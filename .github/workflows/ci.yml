@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install package and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+          python -m pip install -e .
+      - name: Run tests
+        run: python -m pytest tests/ -v --tb=short
+
+  lint:
+    name: lint (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ruff
+        run: python -m pip install ruff
+      - name: Check formatting
+        run: ruff format --check obsidian_wiki/ tests/ tools/ || echo "::warning::Formatting issues found — run 'ruff format' locally to fix"
+      - name: Check lint rules
+        run: ruff check obsidian_wiki/ tests/ tools/ || echo "::warning::Lint issues found — run 'ruff check --fix' locally to fix"
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build package
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+      - name: Verify wheel contents
+        run: |
+          python -m pip install --upgrade twine
+          twine check dist/*
+          wheel=$(ls dist/*.whl)
+          if ! python -m zipfile -l "$wheel" | grep -q "obsidian_wiki/_data/skills/wiki-setup/SKILL.md"; then
+            echo "::error::wheel is missing bundled skills"
+            exit 1
+          fi
+
+  frontmatter:
+    name: frontmatter
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate skill SKILL.md files exist
+        run: |
+          errors=0
+          for dir in .skills/*/; do
+            skill=$(basename "$dir")
+            if [ ! -f "$dir/SKILL.md" ]; then
+              echo "::error::Missing SKILL.md in $dir"
+              errors=$((errors + 1))
+            fi
+          done
+          if [ "$errors" -gt 0 ]; then
+            echo "$errors skill(s) missing SKILL.md"
+            exit 1
+          fi
+          echo "All skills have SKILL.md"
+      - name: Check sample vault frontmatter
+        run: |
+          errors=0
+          required_fields="title category tags"
+          for f in examples/sample-vault/concepts/*.md examples/sample-vault/entities/*.md examples/sample-vault/skills/*.md examples/sample-vault/references/*.md examples/sample-vault/synthesis/*.md examples/sample-vault/journal/*.md; do
+            [ -f "$f" ] || continue
+            for field in $required_fields; do
+              if ! head -20 "$f" | grep -q "^${field}:"; then
+                echo "::error file=$f::Missing frontmatter field: $field"
+                errors=$((errors + 1))
+              fi
+            done
+          done
+          if [ "$errors" -gt 0 ]; then
+            echo "$errors frontmatter error(s)"
+            exit 1
+          fi
+          echo "All frontmatter checks passed"
