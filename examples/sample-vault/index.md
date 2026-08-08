@@ -20,7 +20,8 @@ title: Wiki Index
 
 ## References
 
-- [[obsidian-비마크다운-파일-연관]] — PDF, Excel, Word, HWP 파일 연관 및 검색 방법
+- [[obsidian-비마크다운-파일-연관]] — PDF, Excel, Word, HWP 파일 연관·검색·플러그인 가이드
+- [[obsidian-추천-플러그인]] — 세컨드 브레인 구축 필수/추천 커뮤니티 플러그인 목록
 
 ## Synthesis
 
